@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<!-- Run as a Home Screen app on iPhone (standalone) so it feels like a real app. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="GymFit">
+<title>GymFit</title>
+<style>
+  :root {
+    --bg: #14171d; --card: #1e222b; --card2: #262b36; --accent: #4f8ef7;
+    --good: #3ecf6e; --warn: #d9a441; --bad: #f75f5f; --text: #eef1f6; --muted: #8b93a6;
+    --chest:#f7674f; --triceps:#4f8ef7; --biceps:#b46ef7; --shoulders:#f7b24f;
+    --back:#3ecf6e; --core:#e14f9c; --legs:#4fd6d6; --forearms:#9c8cf7;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body {
+    background: var(--bg); color: var(--text); font-family: -apple-system, system-ui, sans-serif;
+    min-height: 100vh; padding: 16px 14px calc(24px + env(safe-area-inset-bottom));
+    max-width: 620px; margin: 0 auto; font-size: 1rem;
+  }
+  h1 { font-size: 1.5rem; letter-spacing: .3px; }
+  h1 .dot { color: var(--good); }
+  .sub { color: var(--muted); font-size: .95rem; margin-top: 2px; }
+  .tabbar { display: flex; gap: 6px; background: var(--card); border-radius: 999px; padding: 5px; margin: 14px 0; }
+  .tabbar button {
+    flex: 1; background: none; border: none; color: var(--muted); font-weight: 700;
+    font-size: 1rem; padding: 10px 6px; border-radius: 999px; cursor: pointer;
+  }
+  .tabbar button.active { background: var(--accent); color: #fff; }
+  .screen { display: none; }
+  .screen.active { display: block; }
+
+  /* cards / stats */
+  .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 12px 0; }
+  .stat { background: var(--card); border-radius: 14px; padding: 14px; text-align: center; }
+  .stat .big { font-size: 1.9rem; font-weight: 800; line-height: 1.1; }
+  .stat .lbl { color: var(--muted); font-size: .85rem; margin-top: 4px; }
+  .section-title { font-weight: 700; font-size: 1.05rem; margin: 18px 0 8px; }
+
+  /* workout picker */
+  .wk-card {
+    background: var(--card); border-radius: 16px; padding: 16px; margin-bottom: 10px;
+    cursor: pointer; border: 2px solid transparent; transition: border-color .1s, transform .1s;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .wk-card:active { transform: scale(.99); }
+  .wk-card.suggested { border-color: var(--good); box-shadow: 0 0 14px rgba(62,207,110,.25); }
+  .wk-emoji { font-size: 2rem; }
+  .wk-info { flex: 1; }
+  .wk-name { font-weight: 700; font-size: 1.15rem; }
+  .wk-meta { color: var(--muted); font-size: .9rem; margin-top: 2px; }
+  .wk-badge { font-size: .72rem; font-weight: 700; color: var(--good); }
+
+  /* runner */
+  #runner { display: none; }
+  .run-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .ghost { background: none; border: 1px solid #363c49; color: var(--muted); padding: 9px 14px;
+    border-radius: 10px; font-size: .95rem; cursor: pointer; }
+  .ghost:active { background: var(--card2); }
+  .run-progress { color: var(--muted); font-size: .9rem; margin-left: auto; }
+  .ex-card { background: var(--card); border-radius: 18px; padding: 18px; text-align: center; }
+  .ex-name { font-size: 1.6rem; font-weight: 800; }
+  .ex-target { color: var(--muted); font-size: 1rem; margin: 4px 0 12px; }
+  .ex-scheme { font-size: 1.15rem; font-weight: 700; margin-bottom: 6px; }
+  .set-dots { display: flex; gap: 8px; justify-content: center; margin: 12px 0; flex-wrap: wrap; }
+  .set-dot { width: 26px; height: 26px; border-radius: 50%; background: #2e3342; display: flex;
+    align-items: center; justify-content: center; font-size: .85rem; font-weight: 700; color: var(--muted); }
+  .set-dot.done { background: var(--good); color: #08230f; }
+  .timer { font-size: 3.4rem; font-weight: 800; font-variant-numeric: tabular-nums; margin: 8px 0; }
+  .timer.rest { color: var(--warn); }
+  .big-btn {
+    display: block; width: 100%; border: none; border-radius: 16px; padding: 18px;
+    font-size: 1.25rem; font-weight: 800; cursor: pointer; color: #08230f;
+    background: linear-gradient(135deg, #3ecf6e, #2fae5a); margin-top: 12px;
+  }
+  .big-btn.rest { background: linear-gradient(135deg, #d9a441, #c08a2c); color: #241a08; }
+  .big-btn:active { transform: scale(.99); }
+  .run-row { display: flex; gap: 8px; margin-top: 10px; }
+  .run-row .ghost { flex: 1; text-align: center; }
+
+  /* body muscle map */
+  .bodymap { display: flex; gap: 10px; justify-content: center; margin: 10px 0; }
+  .bodymap svg { height: 150px; }
+  .bodymap .part { fill: #333a47; transition: fill .15s; }
+  .bodymap .part.on { fill: var(--accent); }
+
+  /* heatmap */
+  .heat-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+  .heat-cell { aspect-ratio: 1; border-radius: 4px; background: #262b36; }
+  .heat-cell.trained { background: var(--good); }
+  .heat-cell.today { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .heat-cell.future { background: transparent; }
+  .legend { display: flex; gap: 12px; color: var(--muted); font-size: .82rem; margin: 6px 0 10px; }
+  .legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; vertical-align: -1px; margin-right: 4px; }
+
+  /* muscle balance bars */
+  .bal-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .bal-name { width: 90px; font-size: .9rem; }
+  .bal-bar { flex: 1; height: 12px; background: #262b36; border-radius: 6px; overflow: hidden; }
+  .bal-bar > div { height: 100%; border-radius: 6px; }
+  .bal-n { width: 26px; text-align: right; color: var(--muted); font-size: .85rem; }
+
+  /* recent sessions */
+  .sess { background: var(--card); border-radius: 12px; padding: 12px 14px; margin-bottom: 8px;
+    display: flex; align-items: center; gap: 12px; }
+  .sess .em { font-size: 1.5rem; }
+  .sess .info { flex: 1; }
+  .sess .t { font-weight: 700; }
+  .sess .d { color: var(--muted); font-size: .85rem; }
+  .empty { color: var(--muted); text-align: center; padding: 24px 10px; }
+  .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+    background: var(--good); color: #08230f; font-weight: 700; padding: 12px 18px;
+    border-radius: 999px; box-shadow: 0 6px 20px rgba(0,0,0,.4); opacity: 0; transition: opacity .2s;
+    pointer-events: none; z-index: 100; }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+  <h1>Gym<span class="dot">Fit</span></h1>
+  <div class="sub">Upper-body focus · track every session</div>
+
+  <div class="tabbar">
+    <button id="tabWorkout" class="active">🏋️ Workout</button>
+    <button id="tabDash">📊 Dashboard</button>
+  </div>
+
+  <!-- ===================== WORKOUT PICKER ===================== -->
+  <div id="screenWorkout" class="screen active">
+    <div id="picker">
+      <div class="section-title">Today’s pick</div>
+      <div id="workoutList"></div>
+    </div>
+
+    <!-- ===================== RUNNER ===================== -->
+    <div id="runner">
+      <div class="run-head">
+        <button class="ghost" id="quitBtn">← Quit</button>
+        <span class="run-progress" id="runProgress"></span>
+      </div>
+      <div class="ex-card">
+        <div class="ex-name" id="exName">—</div>
+        <div class="ex-target" id="exTarget">—</div>
+        <div class="bodymap" id="bodyMap"></div>
+        <div class="ex-scheme" id="exScheme">—</div>
+        <div class="set-dots" id="setDots"></div>
+        <div class="timer" id="timer">0:00</div>
+        <button class="big-btn" id="actionBtn">Start set</button>
+        <div class="run-row">
+          <button class="ghost" id="prevBtn">← Prev</button>
+          <button class="ghost" id="skipRestBtn">Skip rest</button>
+          <button class="ghost" id="nextBtn">Next →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== DASHBOARD ===================== -->
+  <div id="screenDash" class="screen">
+    <div class="cards">
+      <div class="stat"><div class="big" id="dSessions">0</div><div class="lbl">total sessions</div></div>
+      <div class="stat"><div class="big" id="dWeek">0</div><div class="lbl">this week</div></div>
+      <div class="stat"><div class="big" id="dStreak">0</div><div class="lbl">day streak</div></div>
+      <div class="stat"><div class="big" id="dMinutes">0</div><div class="lbl">total minutes</div></div>
+    </div>
+
+    <div class="section-title">Last 5 weeks</div>
+    <div class="legend"><span><i style="background:var(--good)"></i>trained</span><span><i style="background:#262b36"></i>rest / missed</span></div>
+    <div class="heat-grid" id="heat"></div>
+
+    <div class="section-title">Muscle balance</div>
+    <div id="balance"></div>
+
+    <div class="section-title">Recent sessions</div>
+    <div id="recent"></div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+// =========================================================================================
+// GymFit — single-file workout tracker. localStorage only. Upper-body (chest/triceps/arms) focus,
+// hypertrophy style for a lean "slim + a little bulk" goal. Doesn't force a schedule — it SUGGESTS
+// today's workout and tracks how often you go + what you trained. Apartment-gym exercises (dumbbells,
+// bench, cables, machines); swap-friendly later.
+// =========================================================================================
+
+// ---------- data: workout templates ----------
+// muscle keys map to the body-map regions + balance chart + color legend.
+const WORKOUTS = [
+  { id: "chest-tri", name: "Chest & Triceps", emoji: "💥", focus: ["chest","triceps"], ex: [
+    { name: "Incline Dumbbell Press", muscle: "chest", sets: 4, reps: "8–10", rest: 90 },
+    { name: "Flat Dumbbell Press", muscle: "chest", sets: 3, reps: "8–12", rest: 90 },
+    { name: "Cable Fly", muscle: "chest", sets: 3, reps: "12–15", rest: 60 },
+    { name: "Triceps Rope Pushdown", muscle: "triceps", sets: 4, reps: "10–12", rest: 60 },
+    { name: "Overhead DB Extension", muscle: "triceps", sets: 3, reps: "10–12", rest: 60 },
+    { name: "Bench Dips", muscle: "triceps", sets: 2, reps: "AMRAP", rest: 60 },
+  ]},
+  { id: "arms", name: "Arms (Biceps & Triceps)", emoji: "💪", focus: ["biceps","triceps"], ex: [
+    { name: "Dumbbell Biceps Curl", muscle: "biceps", sets: 4, reps: "8–12", rest: 60 },
+    { name: "Hammer Curl", muscle: "biceps", sets: 3, reps: "10–12", rest: 60 },
+    { name: "Cable Curl", muscle: "biceps", sets: 3, reps: "12–15", rest: 60 },
+    { name: "Triceps Rope Pushdown", muscle: "triceps", sets: 4, reps: "10–12", rest: 60 },
+    { name: "Overhead DB Extension", muscle: "triceps", sets: 3, reps: "10–12", rest: 60 },
+    { name: "Concentration Curl", muscle: "biceps", sets: 2, reps: "12–15", rest: 45 },
+  ]},
+  { id: "shoulders-chest", name: "Shoulders & Chest", emoji: "🏋️", focus: ["shoulders","chest"], ex: [
+    { name: "Seated DB Shoulder Press", muscle: "shoulders", sets: 4, reps: "8–10", rest: 90 },
+    { name: "Lateral Raise", muscle: "shoulders", sets: 3, reps: "12–15", rest: 45 },
+    { name: "Incline Dumbbell Press", muscle: "chest", sets: 3, reps: "8–12", rest: 90 },
+    { name: "Cable Fly", muscle: "chest", sets: 3, reps: "12–15", rest: 60 },
+    { name: "Front Raise", muscle: "shoulders", sets: 2, reps: "12–15", rest: 45 },
+    { name: "Rear Delt Fly", muscle: "shoulders", sets: 3, reps: "15", rest: 45 },
+  ]},
+  { id: "upper-full", name: "Upper Full Body", emoji: "⚡", focus: ["chest","back","shoulders","biceps","triceps"], ex: [
+    { name: "Incline Dumbbell Press", muscle: "chest", sets: 3, reps: "8–10", rest: 90 },
+    { name: "Lat Pulldown", muscle: "back", sets: 3, reps: "10–12", rest: 75 },
+    { name: "Seated DB Shoulder Press", muscle: "shoulders", sets: 3, reps: "8–10", rest: 75 },
+    { name: "One-Arm DB Row", muscle: "back", sets: 3, reps: "10–12", rest: 75 },
+    { name: "Dumbbell Biceps Curl", muscle: "biceps", sets: 3, reps: "10–12", rest: 60 },
+    { name: "Triceps Rope Pushdown", muscle: "triceps", sets: 3, reps: "10–12", rest: 60 },
+  ]},
+  { id: "back-bi", name: "Back & Biceps", emoji: "🎯", focus: ["back","biceps"], ex: [
+    { name: "Lat Pulldown", muscle: "back", sets: 4, reps: "8–12", rest: 90 },
+    { name: "Seated Cable Row", muscle: "back", sets: 3, reps: "10–12", rest: 75 },
+    { name: "One-Arm DB Row", muscle: "back", sets: 3, reps: "10–12", rest: 75 },
+    { name: "Face Pull", muscle: "shoulders", sets: 3, reps: "15", rest: 45 },
+    { name: "Dumbbell Biceps Curl", muscle: "biceps", sets: 3, reps: "10–12", rest: 60 },
+    { name: "Hammer Curl", muscle: "biceps", sets: 3, reps: "10–12", rest: 60 },
+  ]},
+];
+
+const MUSCLES = ["chest","triceps","biceps","shoulders","back","core","legs","forearms"];
+const MUSCLE_LABEL = { chest:"Chest", triceps:"Triceps", biceps:"Biceps", shoulders:"Shoulders", back:"Back", core:"Core", legs:"Legs", forearms:"Forearms" };
+
+// ---------- storage ----------
+const HIST_KEY = "gf_history";   // [{date, id, name, focus:[], durationMs, setsDone, muscles:{m:setcount}}]
+const LAST_KEY = "gf_lastWorkoutId";
+function getHistory() { try { return JSON.parse(localStorage.getItem(HIST_KEY) || "[]"); } catch (e) { return []; } }
+function saveHistory(h) { try { localStorage.setItem(HIST_KEY, JSON.stringify(h)); } catch (e) {} }
+function todayStr() { return new Date().toLocaleDateString("en-CA"); }
+function dayKey(d) { return d.toLocaleDateString("en-CA"); }
+
+// ---------- audio: short beep when rest ends (unlock on first tap) ----------
+let actx;
+function actxGet() { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === "suspended") actx.resume(); return actx; }
+function unlock() { try { const c = actxGet(); const s = c.createBufferSource(); s.buffer = c.createBuffer(1,1,22050); s.connect(c.destination); s.start(0); } catch (e) {} }
+document.addEventListener("touchend", unlock, { passive: true });
+document.addEventListener("click", unlock);
+function beep(freq, when, dur) {
+  try {
+    const c = actxGet(), t = c.currentTime + (when || 0);
+    const o = c.createOscillator(), g = c.createGain();
+    o.type = "sine"; o.frequency.value = freq || 880;
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(0.25, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + (dur || 0.4));
+    o.connect(g).connect(c.destination); o.start(t); o.stop(t + (dur || 0.4) + 0.05);
+  } catch (e) {}
+}
+function restDoneChime() { beep(660, 0, 0.18); beep(880, 0.2, 0.28); }
+
+// ---------- body muscle map (front + back silhouettes) ----------
+// Each <path>/<ellipse> has data-m listing the muscles it represents; we light up matching parts.
+function bodyMapSVG(activeMuscle) {
+  const on = m => (m === activeMuscle ? " on" : "");
+  return (
+  '<svg viewBox="0 0 80 150" aria-label="front"><g>' +
+    // head
+    '<circle cx="40" cy="12" r="8" class="part"/>' +
+    // shoulders
+    '<ellipse cx="24" cy="34" rx="9" ry="7" class="part' + on("shoulders") + '"/>' +
+    '<ellipse cx="56" cy="34" rx="9" ry="7" class="part' + on("shoulders") + '"/>' +
+    // chest
+    '<rect x="27" y="30" width="26" height="20" rx="7" class="part' + on("chest") + '"/>' +
+    // core
+    '<rect x="30" y="50" width="20" height="24" rx="5" class="part' + on("core") + '"/>' +
+    // biceps (upper arms front)
+    '<rect x="15" y="40" width="9" height="22" rx="4" class="part' + on("biceps") + '"/>' +
+    '<rect x="56" y="40" width="9" height="22" rx="4" class="part' + on("biceps") + '"/>' +
+    // forearms
+    '<rect x="14" y="62" width="8" height="20" rx="4" class="part' + on("forearms") + '"/>' +
+    '<rect x="58" y="62" width="8" height="20" rx="4" class="part' + on("forearms") + '"/>' +
+    // legs
+    '<rect x="30" y="76" width="8" height="40" rx="4" class="part' + on("legs") + '"/>' +
+    '<rect x="42" y="76" width="8" height="40" rx="4" class="part' + on("legs") + '"/>' +
+  '</g></svg>' +
+  '<svg viewBox="0 0 80 150" aria-label="back"><g>' +
+    '<circle cx="40" cy="12" r="8" class="part"/>' +
+    '<ellipse cx="24" cy="34" rx="9" ry="7" class="part' + on("shoulders") + '"/>' +
+    '<ellipse cx="56" cy="34" rx="9" ry="7" class="part' + on("shoulders") + '"/>' +
+    // back
+    '<rect x="27" y="30" width="26" height="24" rx="7" class="part' + on("back") + '"/>' +
+    // triceps (upper arms back)
+    '<rect x="15" y="40" width="9" height="22" rx="4" class="part' + on("triceps") + '"/>' +
+    '<rect x="56" y="40" width="9" height="22" rx="4" class="part' + on("triceps") + '"/>' +
+    '<rect x="14" y="62" width="8" height="20" rx="4" class="part' + on("forearms") + '"/>' +
+    '<rect x="58" y="62" width="8" height="20" rx="4" class="part' + on("forearms") + '"/>' +
+    '<rect x="30" y="76" width="8" height="40" rx="4" class="part' + on("legs") + '"/>' +
+    '<rect x="42" y="76" width="8" height="40" rx="4" class="part' + on("legs") + '"/>' +
+  '</g></svg>');
+}
+
+// ---------- workout picker ----------
+function suggestId() {
+  // suggest something different from the last workout, to keep it rotating
+  const last = localStorage.getItem(LAST_KEY);
+  const options = WORKOUTS.filter(w => w.id !== last);
+  return (options[0] || WORKOUTS[0]).id;
+}
+function renderPicker() {
+  const sug = suggestId();
+  const list = document.getElementById("workoutList");
+  list.innerHTML = "";
+  // suggested first, then the rest
+  const ordered = [...WORKOUTS].sort((a, b) => (a.id === sug ? -1 : b.id === sug ? 1 : 0));
+  ordered.forEach(w => {
+    const el = document.createElement("div");
+    el.className = "wk-card" + (w.id === sug ? " suggested" : "");
+    const focus = w.focus.map(m => MUSCLE_LABEL[m] || m).join(" · ");
+    el.innerHTML =
+      '<div class="wk-emoji">' + w.emoji + '</div>' +
+      '<div class="wk-info"><div class="wk-name">' + w.name + '</div>' +
+      '<div class="wk-meta">' + w.ex.length + ' exercises · ' + focus + '</div>' +
+      (w.id === sug ? '<div class="wk-badge">⭐ Suggested today</div>' : '') + '</div>';
+    el.onclick = () => startWorkout(w.id);
+    list.appendChild(el);
+  });
+}
+
+// ---------- runner ----------
+let run = null; // { w, exIdx, setIdx, phase:'idle'|'set'|'rest', startTs, tickInt, restLeft, muscles:{} }
+function startWorkout(id) {
+  const w = WORKOUTS.find(x => x.id === id);
+  if (!w) return;
+  run = { w, exIdx: 0, setIdx: 0, phase: "idle", startTs: Date.now(), restLeft: 0, tickInt: null, setsDone: 0, muscles: {} };
+  document.getElementById("picker").style.display = "none";
+  document.getElementById("runner").style.display = "block";
+  renderExercise();
+}
+function curEx() { return run.w.ex[run.exIdx]; }
+function renderExercise() {
+  const ex = curEx();
+  document.getElementById("exName").textContent = ex.name;
+  document.getElementById("exTarget").textContent = "Target: " + (MUSCLE_LABEL[ex.muscle] || ex.muscle);
+  document.getElementById("exScheme").textContent = ex.sets + " sets × " + ex.reps + " reps";
+  document.getElementById("bodyMap").innerHTML = bodyMapSVG(ex.muscle);
+  document.getElementById("runProgress").textContent = "Exercise " + (run.exIdx + 1) + " / " + run.w.ex.length;
+  renderSetDots();
+  setPhaseIdle();
+}
+function renderSetDots() {
+  const ex = curEx();
+  const box = document.getElementById("setDots");
+  box.innerHTML = "";
+  for (let i = 0; i < ex.sets; i++) {
+    const d = document.createElement("div");
+    d.className = "set-dot" + (i < run.setIdx ? " done" : "");
+    d.textContent = (i + 1);
+    box.appendChild(d);
+  }
+}
+function fmt(s) { const m = Math.floor(s / 60); return m + ":" + String(s % 60).padStart(2, "0"); }
+function clearTick() { if (run.tickInt) { clearInterval(run.tickInt); run.tickInt = null; } }
+
+function setPhaseIdle() {
+  clearTick();
+  run.phase = "idle";
+  const ex = curEx();
+  const t = document.getElementById("timer");
+  t.className = "timer"; t.textContent = "Set " + (run.setIdx + 1) + " of " + ex.sets;
+  const btn = document.getElementById("actionBtn");
+  btn.className = "big-btn"; btn.textContent = run.setIdx < ex.sets ? "✓ Set done → rest" : "Next exercise →";
+  btn.onclick = run.setIdx < ex.sets ? completeSet : nextExercise;
+}
+function completeSet() {
+  const ex = curEx();
+  run.setIdx++;
+  run.setsDone++;
+  run.muscles[ex.muscle] = (run.muscles[ex.muscle] || 0) + 1;
+  renderSetDots();
+  if (run.setIdx >= ex.sets) { setPhaseIdle(); return; } // last set done → offer next exercise
+  startRest(ex.rest);
+}
+function startRest(sec) {
+  run.phase = "rest"; run.restLeft = sec;
+  const t = document.getElementById("timer");
+  t.className = "timer rest"; t.textContent = fmt(run.restLeft);
+  const btn = document.getElementById("actionBtn");
+  btn.className = "big-btn rest"; btn.textContent = "⏭ Skip rest";
+  btn.onclick = endRest;
+  clearTick();
+  run.tickInt = setInterval(() => {
+    run.restLeft--;
+    if (run.restLeft <= 0) { restDoneChime(); endRest(); return; }
+    document.getElementById("timer").textContent = fmt(run.restLeft);
+    if (run.restLeft === 3) beep(700, 0, 0.12);
+  }, 1000);
+}
+function endRest() { clearTick(); setPhaseIdle(); }
+function nextExercise() {
+  clearTick();
+  if (run.exIdx < run.w.ex.length - 1) { run.exIdx++; run.setIdx = 0; renderExercise(); }
+  else finishWorkout();
+}
+function prevExercise() {
+  clearTick();
+  if (run.exIdx > 0) { run.exIdx--; run.setIdx = 0; renderExercise(); }
+}
+function finishWorkout() {
+  clearTick();
+  const durMs = Date.now() - run.startTs;
+  const h = getHistory();
+  h.push({
+    date: todayStr(), id: run.w.id, name: run.w.name, focus: run.w.focus,
+    durationMs: durMs, setsDone: run.setsDone, muscles: run.muscles, ts: run.startTs
+  });
+  saveHistory(h);
+  localStorage.setItem(LAST_KEY, run.w.id);
+  const mins = Math.max(1, Math.round(durMs / 60000));
+  run = null;
+  document.getElementById("runner").style.display = "none";
+  document.getElementById("picker").style.display = "block";
+  renderPicker();
+  toast("💪 Logged: " + mins + " min");
+  switchTab("dash");
+}
+function quitWorkout() {
+  if (run && run.setsDone > 0) { if (!confirm("Quit? This session won’t be saved.")) return; }
+  clearTick(); run = null;
+  document.getElementById("runner").style.display = "none";
+  document.getElementById("picker").style.display = "block";
+}
+
+// ---------- dashboard ----------
+function startOfWeek(d) { const x = new Date(d); const day = (x.getDay() + 6) % 7; x.setDate(x.getDate() - day); x.setHours(0,0,0,0); return x; }
+function renderDash() {
+  const h = getHistory();
+  const days = new Set(h.map(s => s.date));
+  document.getElementById("dSessions").textContent = h.length;
+  document.getElementById("dMinutes").textContent = Math.round(h.reduce((a, s) => a + (s.durationMs || 0), 0) / 60000);
+  // this week
+  const wkStart = startOfWeek(new Date());
+  document.getElementById("dWeek").textContent = h.filter(s => new Date(s.date + "T00:00:00") >= wkStart).length;
+  // day streak (consecutive days up to today that have a session)
+  let streak = 0; const probe = new Date();
+  while (days.has(dayKey(probe))) { streak++; probe.setDate(probe.getDate() - 1); }
+  document.getElementById("dStreak").textContent = streak;
+
+  // heatmap: 35 days
+  const heat = document.getElementById("heat"); heat.innerHTML = "";
+  const today = todayStr();
+  const start = new Date(); start.setDate(start.getDate() - 34);
+  for (let i = 0; i < 35; i++) {
+    const d = new Date(start); d.setDate(start.getDate() + i);
+    const k = dayKey(d);
+    let cls = "heat-cell";
+    if (k > today) cls += " future";
+    else if (days.has(k)) cls += " trained";
+    if (k === today) cls += " today";
+    const cell = document.createElement("div");
+    cell.className = cls; cell.title = k + (days.has(k) ? " — trained" : "");
+    heat.appendChild(cell);
+  }
+
+  // muscle balance (total sets per muscle across all history)
+  const totals = {};
+  h.forEach(s => Object.entries(s.muscles || {}).forEach(([m, n]) => totals[m] = (totals[m] || 0) + n));
+  const max = Math.max(1, ...Object.values(totals));
+  const bal = document.getElementById("balance"); bal.innerHTML = "";
+  const shown = MUSCLES.filter(m => totals[m]);
+  if (!shown.length) { bal.innerHTML = '<div class="empty">No sets logged yet — finish a workout to see your balance.</div>'; }
+  shown.sort((a, b) => (totals[b] || 0) - (totals[a] || 0)).forEach(m => {
+    const row = document.createElement("div"); row.className = "bal-row";
+    row.innerHTML = '<div class="bal-name">' + (MUSCLE_LABEL[m] || m) + '</div>' +
+      '<div class="bal-bar"><div style="width:' + Math.round(100 * totals[m] / max) + '%;background:var(--' + m + ',#4f8ef7)"></div></div>' +
+      '<div class="bal-n">' + totals[m] + '</div>';
+    bal.appendChild(row);
+  });
+
+  // recent sessions
+  const rec = document.getElementById("recent"); rec.innerHTML = "";
+  if (!h.length) { rec.innerHTML = '<div class="empty">No sessions yet. Tap 🏋️ Workout to start your first.</div>'; return; }
+  [...h].reverse().slice(0, 8).forEach(s => {
+    const w = WORKOUTS.find(x => x.id === s.id);
+    const el = document.createElement("div"); el.className = "sess";
+    el.innerHTML = '<div class="em">' + (w ? w.emoji : "💪") + '</div>' +
+      '<div class="info"><div class="t">' + s.name + '</div>' +
+      '<div class="d">' + s.date + ' · ' + Math.max(1, Math.round((s.durationMs || 0) / 60000)) + ' min · ' + (s.setsDone || 0) + ' sets</div></div>';
+    rec.appendChild(el);
+  });
+}
+
+// ---------- tabs ----------
+function switchTab(which) {
+  const isDash = which === "dash";
+  document.getElementById("tabDash").classList.toggle("active", isDash);
+  document.getElementById("tabWorkout").classList.toggle("active", !isDash);
+  document.getElementById("screenDash").classList.toggle("active", isDash);
+  document.getElementById("screenWorkout").classList.toggle("active", !isDash);
+  if (isDash) renderDash();
+}
+let toastT = null;
+function toast(msg) {
+  const el = document.getElementById("toast"); el.textContent = msg; el.classList.add("show");
+  clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove("show"), 1800);
+}
+
+// ---------- wire ----------
+document.getElementById("tabWorkout").onclick = () => switchTab("workout");
+document.getElementById("tabDash").onclick = () => switchTab("dash");
+document.getElementById("actionBtn"); // set per phase
+document.getElementById("nextBtn").onclick = nextExercise;
+document.getElementById("prevBtn").onclick = prevExercise;
+document.getElementById("skipRestBtn").onclick = () => { if (run && run.phase === "rest") endRest(); };
+document.getElementById("quitBtn").onclick = quitWorkout;
+
+renderPicker();
+</script>
+</body>
+</html>
