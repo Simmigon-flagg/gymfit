@@ -69,6 +69,15 @@
   .set-dot { width: 26px; height: 26px; border-radius: 50%; background: #2e3342; display: flex;
     align-items: center; justify-content: center; font-size: .85rem; font-weight: 700; color: var(--muted); }
   .set-dot.done { background: var(--good); color: #08230f; }
+  .weight-row { display: flex; gap: 10px; justify-content: center; margin: 12px 0 4px; }
+  .weight-row label { display: flex; flex-direction: column; gap: 4px; font-size: .8rem; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .5px; }
+  .weight-row input { width: 100px; background: #14171d; border: 1px solid #3a4054; color: var(--text);
+    border-radius: 12px; padding: 12px; font-size: 1.4rem; text-align: center; font-weight: 800; }
+  .weight-row.hide { display: none; }
+  .lift-row { display: flex; align-items: center; gap: 10px; background: var(--card); border-radius: 12px; padding: 10px 14px; margin-bottom: 8px; }
+  .lift-row .ln { flex: 1; font-weight: 700; }
+  .lift-row .lw { font-weight: 800; }
+  .lift-row .lb { color: var(--muted); font-size: .82rem; }
   .timer { font-size: 3.4rem; font-weight: 800; font-variant-numeric: tabular-nums; margin: 8px 0; }
   .timer.rest { color: var(--warn); }
   .big-btn {
@@ -146,6 +155,10 @@
         <div class="bodymap" id="bodyMap"></div>
         <div class="ex-scheme" id="exScheme">—</div>
         <div class="set-dots" id="setDots"></div>
+        <div class="weight-row" id="weightRow">
+          <label>Weight <input type="number" id="weightInput" inputmode="decimal" placeholder="lbs"></label>
+          <label>Reps <input type="number" id="repsInput" inputmode="numeric" placeholder="#"></label>
+        </div>
         <div class="timer" id="timer">0:00</div>
         <button class="big-btn" id="actionBtn">Start set</button>
         <div class="run-row">
@@ -169,6 +182,9 @@
     <div class="section-title">Last 5 weeks</div>
     <div class="legend"><span><i style="background:var(--good)"></i>trained</span><span><i style="background:#262b36"></i>rest / missed</span></div>
     <div class="heat-grid" id="heat"></div>
+
+    <div class="section-title">🏋️ Your lifts <span class="dash-hint" style="color:var(--muted);font-size:.8rem;font-weight:400">— latest &amp; best weight</span></div>
+    <div id="lifts"></div>
 
     <div class="section-title">Muscle balance</div>
     <div id="balance"></div>
@@ -236,8 +252,11 @@ const MUSCLES = ["chest","triceps","biceps","shoulders","back","core","legs","fo
 const MUSCLE_LABEL = { chest:"Chest", triceps:"Triceps", biceps:"Biceps", shoulders:"Shoulders", back:"Back", core:"Core", legs:"Legs", forearms:"Forearms" };
 
 // ---------- storage ----------
-const HIST_KEY = "gf_history";   // [{date, id, name, focus:[], durationMs, setsDone, muscles:{m:setcount}}]
+const HIST_KEY = "gf_history";   // [{date, id, name, focus:[], durationMs, setsDone, muscles:{}, log:{ex:[{w,r}]}, volume}]
 const LAST_KEY = "gf_lastWorkoutId";
+const LASTW_KEY = "gf_lastWeights"; // { exerciseName: lastWeightUsed } — prefills the weight box
+function getLastWeights() { try { return JSON.parse(localStorage.getItem(LASTW_KEY) || "{}"); } catch (e) { return {}; } }
+function setLastWeight(name, w) { const m = getLastWeights(); m[name] = w; try { localStorage.setItem(LASTW_KEY, JSON.stringify(m)); } catch (e) {} }
 function getHistory() { try { return JSON.parse(localStorage.getItem(HIST_KEY) || "[]"); } catch (e) { return []; } }
 function saveHistory(h) { try { localStorage.setItem(HIST_KEY, JSON.stringify(h)); } catch (e) {} }
 function todayStr() { return new Date().toLocaleDateString("en-CA"); }
@@ -334,7 +353,7 @@ let run = null; // { w, exIdx, setIdx, phase:'idle'|'set'|'rest', startTs, tickI
 function startWorkout(id) {
   const w = WORKOUTS.find(x => x.id === id);
   if (!w) return;
-  run = { w, exIdx: 0, setIdx: 0, phase: "idle", startTs: Date.now(), restLeft: 0, tickInt: null, setsDone: 0, muscles: {} };
+  run = { w, exIdx: 0, setIdx: 0, phase: "idle", startTs: Date.now(), restLeft: 0, tickInt: null, setsDone: 0, muscles: {}, log: {} };
   document.getElementById("picker").style.display = "none";
   document.getElementById("runner").style.display = "block";
   renderExercise();
@@ -347,6 +366,11 @@ function renderExercise() {
   document.getElementById("exScheme").textContent = ex.sets + " sets × " + ex.reps + " reps";
   document.getElementById("bodyMap").innerHTML = bodyMapSVG(ex.muscle);
   document.getElementById("runProgress").textContent = "Exercise " + (run.exIdx + 1) + " / " + run.w.ex.length;
+  // prefill weight from last time you did this exercise; reps default to the low end of the scheme
+  const lastW = getLastWeights()[ex.name];
+  document.getElementById("weightInput").value = (lastW != null ? lastW : "");
+  document.getElementById("repsInput").value = "";
+  document.getElementById("repsInput").placeholder = String(ex.reps).replace(/[^0-9].*$/, "") || "#";
   renderSetDots();
   setPhaseIdle();
 }
@@ -367,6 +391,7 @@ function clearTick() { if (run.tickInt) { clearInterval(run.tickInt); run.tickIn
 function setPhaseIdle() {
   clearTick();
   run.phase = "idle";
+  const wr = document.getElementById("weightRow"); if (wr) wr.classList.remove("hide");
   const ex = curEx();
   const t = document.getElementById("timer");
   t.className = "timer"; t.textContent = "Set " + (run.setIdx + 1) + " of " + ex.sets;
@@ -376,6 +401,12 @@ function setPhaseIdle() {
 }
 function completeSet() {
   const ex = curEx();
+  // log the weight + reps you actually did this set
+  const w = parseFloat(document.getElementById("weightInput").value);
+  const reps = parseInt(document.getElementById("repsInput").value, 10);
+  const entry = { w: isNaN(w) ? null : w, r: isNaN(reps) ? null : reps };
+  (run.log[ex.name] = run.log[ex.name] || []).push(entry);
+  if (entry.w != null) setLastWeight(ex.name, entry.w);
   run.setIdx++;
   run.setsDone++;
   run.muscles[ex.muscle] = (run.muscles[ex.muscle] || 0) + 1;
@@ -385,6 +416,7 @@ function completeSet() {
 }
 function startRest(sec) {
   run.phase = "rest"; run.restLeft = sec;
+  const wr = document.getElementById("weightRow"); if (wr) wr.classList.add("hide");
   const t = document.getElementById("timer");
   t.className = "timer rest"; t.textContent = fmt(run.restLeft);
   const btn = document.getElementById("actionBtn");
@@ -412,9 +444,12 @@ function finishWorkout() {
   clearTick();
   const durMs = Date.now() - run.startTs;
   const h = getHistory();
+  // total volume = sum of weight × reps across every logged set
+  let volume = 0;
+  Object.values(run.log).forEach(sets => sets.forEach(s => { if (s.w != null && s.r != null) volume += s.w * s.r; }));
   h.push({
     date: todayStr(), id: run.w.id, name: run.w.name, focus: run.w.focus,
-    durationMs: durMs, setsDone: run.setsDone, muscles: run.muscles, ts: run.startTs
+    durationMs: durMs, setsDone: run.setsDone, muscles: run.muscles, log: run.log, volume: volume, ts: run.startTs
   });
   saveHistory(h);
   localStorage.setItem(LAST_KEY, run.w.id);
@@ -464,6 +499,34 @@ function renderDash() {
     heat.appendChild(cell);
   }
 
+  // 🏋️ lifts progression: latest + best weight per exercise (from logged sets)
+  const lifts = {}; // name -> { latestW, latestR, best, ts }
+  h.forEach(s => {
+    Object.entries(s.log || {}).forEach(([name, sets]) => {
+      sets.forEach(set => {
+        if (set.w == null) return;
+        const L = lifts[name] || { latestW: null, latestR: null, best: 0, ts: 0 };
+        if ((s.ts || 0) >= L.ts) { L.ts = s.ts || 0; L.latestW = set.w; L.latestR = set.r; }
+        if (set.w > L.best) L.best = set.w;
+        lifts[name] = L;
+      });
+    });
+  });
+  const liftBox = document.getElementById("lifts"); liftBox.innerHTML = "";
+  const liftNames = Object.keys(lifts);
+  if (!liftNames.length) {
+    liftBox.innerHTML = '<div class="empty">No weights logged yet — enter weight + reps on each set to track your progress.</div>';
+  } else {
+    liftNames.sort((a, b) => lifts[b].ts - lifts[a].ts).forEach(name => {
+      const L = lifts[name];
+      const el = document.createElement("div"); el.className = "lift-row";
+      el.innerHTML = '<div class="ln">' + name + '</div>' +
+        '<div style="text-align:right"><div class="lw">' + L.latestW + ' lb' + (L.latestR ? ' × ' + L.latestR : '') + '</div>' +
+        '<div class="lb">best ' + L.best + ' lb</div></div>';
+      liftBox.appendChild(el);
+    });
+  }
+
   // muscle balance (total sets per muscle across all history)
   const totals = {};
   h.forEach(s => Object.entries(s.muscles || {}).forEach(([m, n]) => totals[m] = (totals[m] || 0) + n));
@@ -487,7 +550,7 @@ function renderDash() {
     const el = document.createElement("div"); el.className = "sess";
     el.innerHTML = '<div class="em">' + (w ? w.emoji : "💪") + '</div>' +
       '<div class="info"><div class="t">' + s.name + '</div>' +
-      '<div class="d">' + s.date + ' · ' + Math.max(1, Math.round((s.durationMs || 0) / 60000)) + ' min · ' + (s.setsDone || 0) + ' sets</div></div>';
+      '<div class="d">' + s.date + ' · ' + Math.max(1, Math.round((s.durationMs || 0) / 60000)) + ' min · ' + (s.setsDone || 0) + ' sets' + (s.volume ? ' · ' + Math.round(s.volume).toLocaleString() + ' lb vol' : '') + '</div></div>';
     rec.appendChild(el);
   });
 }
