@@ -160,6 +160,7 @@
       <button id="gVerifyBtn">Verify &amp; sign in</button>
     </div>
     <div class="g-msg" id="gMsg"></div>
+    <button id="gSkipBtn" style="background:none;border:none;color:var(--muted);text-decoration:underline;margin-top:18px;font-size:.95rem;cursor:pointer">Skip for now — use without an account</button>
   </div>
 
   <button class="logout-btn" id="logoutBtn" style="display:none">Log out</button>
@@ -291,10 +292,12 @@ const SB_URL = "https://egrdpvoyuhqvqyyetmxv.supabase.co";
 const SB_KEY = "sb_publishable_ygRk_rK5DL6njgrP1sSL3Q_JMb8J3px"; // publishable key — safe in client; RLS protects data
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
 let currentUser = null;         // { id, email }
-let cloudHistory = [];          // session records loaded from Supabase (app shape)
+let guestMode = false;          // "skip login" — local-only, no cloud sync
+let cloudHistory = [];          // session records (cloud when signed in, localStorage in guest mode)
+const GUEST_HIST_KEY = "gf_guest_history";
 
 // per-user, per-device prefs (namespaced so a shared device doesn't mix people)
-function uid() { return currentUser ? currentUser.id : "anon"; }
+function uid() { return currentUser ? currentUser.id : (guestMode ? "guest" : "anon"); }
 const LAST_KEY = () => "gf_lastWorkoutId_" + uid();
 const LASTW_KEY = () => "gf_lastWeights_" + uid();
 function getLastWeights() { try { return JSON.parse(localStorage.getItem(LASTW_KEY()) || "{}"); } catch (e) { return {}; } }
@@ -308,11 +311,13 @@ function rowToRec(r) { return { date: r.date, id: r.workout_id, name: r.name, fo
 function recToRow(rec) { return { date: rec.date, workout_id: rec.id, name: rec.name, focus: rec.focus,
   duration_ms: rec.durationMs, sets_done: rec.setsDone, muscles: rec.muscles, log: rec.log, volume: rec.volume }; }
 async function loadSessions() {
+  if (guestMode) { try { cloudHistory = JSON.parse(localStorage.getItem(GUEST_HIST_KEY) || "[]"); } catch (e) { cloudHistory = []; } return; }
   const { data, error } = await sb.from("sessions").select("*").order("created_at", { ascending: true });
   if (error) { console.warn("load sessions:", error.message); cloudHistory = []; return; }
   cloudHistory = (data || []).map(rowToRec);
 }
 async function insertSession(rec) {
+  if (guestMode) { cloudHistory.push({ ...rec, ts: rec.ts || Date.now() }); try { localStorage.setItem(GUEST_HIST_KEY, JSON.stringify(cloudHistory)); } catch (e) {} return; }
   const { data, error } = await sb.from("sessions").insert(recToRow(rec)).select().single();
   if (error) { console.warn("save session:", error.message); toast("⚠️ Save failed — check connection"); return; }
   cloudHistory.push(rowToRec(data));
@@ -663,18 +668,30 @@ document.getElementById("gVerifyBtn").onclick = async () => {
 };
 document.getElementById("gCode").addEventListener("keydown", e => { if (e.key === "Enter") document.getElementById("gVerifyBtn").click(); });
 document.getElementById("gEmail").addEventListener("keydown", e => { if (e.key === "Enter") document.getElementById("gSendBtn").click(); });
-document.getElementById("logoutBtn").onclick = async () => { await sb.auth.signOut(); location.reload(); };
+document.getElementById("logoutBtn").onclick = async () => { if (!guestMode) await sb.auth.signOut(); location.reload(); };
+// skip login → local-only guest mode
+document.getElementById("gSkipBtn").onclick = async () => {
+  guestMode = true; currentUser = null;
+  gate.classList.remove("show");
+  const lo = document.getElementById("logoutBtn"); lo.style.display = "block"; lo.textContent = "Log in";
+  document.getElementById("whoami").textContent = "Guest — saved on this device only";
+  await loadSessions();
+  renderPicker();
+  switchTab("workout");
+};
 
 async function onSignedIn(user) {
+  guestMode = false;
   currentUser = { id: user.id, email: user.email };
   gate.classList.remove("show");
-  document.getElementById("logoutBtn").style.display = "block";
+  const lo = document.getElementById("logoutBtn"); lo.style.display = "block"; lo.textContent = "Log out";
   document.getElementById("whoami").textContent = "Signed in as " + user.email;
   await loadSessions();
   renderPicker();
   switchTab("workout");
 }
 function showLogin() {
+  if (guestMode) return; // don't yank a guest back to the gate on auth events
   currentUser = null;
   gate.classList.add("show");
   document.getElementById("logoutBtn").style.display = "none";
