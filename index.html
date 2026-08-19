@@ -8,6 +8,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="GymFit">
 <title>GymFit</title>
+<!-- Supabase client (pinned) for passwordless login + cloud sync of your workouts. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.112.3/dist/umd/supabase.js"></script>
 <style>
   :root {
     --bg: #14171d; --card: #1e222b; --card2: #262b36; --accent: #4f8ef7;
@@ -125,11 +127,44 @@
     border-radius: 999px; box-shadow: 0 6px 20px rgba(0,0,0,.4); opacity: 0; transition: opacity .2s;
     pointer-events: none; z-index: 100; }
   .toast.show { opacity: 1; }
+
+  /* ---------- auth gate ---------- */
+  #authGate { position: fixed; inset: 0; background: var(--bg); z-index: 200; display: none;
+    flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; }
+  #authGate.show { display: flex; }
+  #authGate h2 { font-size: 1.8rem; margin-bottom: 4px; }
+  #authGate .g-sub { color: var(--muted); margin-bottom: 20px; }
+  #authGate input { width: 100%; max-width: 320px; background: var(--card); border: 1px solid #3a4054;
+    color: var(--text); border-radius: 12px; padding: 15px; font-size: 1.2rem; text-align: center; margin-bottom: 10px; }
+  #authGate button { width: 100%; max-width: 320px; border: none; border-radius: 12px; padding: 15px;
+    font-size: 1.15rem; font-weight: 800; cursor: pointer; background: var(--accent); color: #fff; }
+  #authGate .g-msg { margin-top: 12px; min-height: 20px; font-weight: 700; }
+  #authGate .g-msg.err { color: var(--bad); } #authGate .g-msg.ok { color: var(--good); }
+  #authGate .g-step { display: none; width: 100%; align-items: center; flex-direction: column; }
+  #authGate .g-step.show { display: flex; }
+  .logout-btn { position: absolute; top: 14px; right: 4px; background: none; border: 1px solid #363c49;
+    color: var(--muted); border-radius: 10px; padding: 6px 12px; font-size: .82rem; cursor: pointer; }
 </style>
 </head>
 <body>
+  <!-- Passwordless login gate: email → 6-digit code. App stays hidden until signed in. -->
+  <div id="authGate">
+    <h2>Gym<span class="dot" style="color:var(--good)">Fit</span></h2>
+    <div class="g-sub">Sign in to track your workouts</div>
+    <div class="g-step show" id="gStepEmail">
+      <input type="email" id="gEmail" placeholder="your email" autocomplete="email" inputmode="email">
+      <button id="gSendBtn">Send me a code</button>
+    </div>
+    <div class="g-step" id="gStepCode">
+      <input type="text" id="gCode" placeholder="6-digit code" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
+      <button id="gVerifyBtn">Verify &amp; sign in</button>
+    </div>
+    <div class="g-msg" id="gMsg"></div>
+  </div>
+
+  <button class="logout-btn" id="logoutBtn" style="display:none">Log out</button>
   <h1>Gym<span class="dot">Fit</span></h1>
-  <div class="sub">Upper-body focus · track every session</div>
+  <div class="sub" id="whoami">Upper-body focus · track every session</div>
 
   <div class="tabbar">
     <button id="tabWorkout" class="active">🏋️ Workout</button>
@@ -251,14 +286,37 @@ const WORKOUTS = [
 const MUSCLES = ["chest","triceps","biceps","shoulders","back","core","legs","forearms"];
 const MUSCLE_LABEL = { chest:"Chest", triceps:"Triceps", biceps:"Biceps", shoulders:"Shoulders", back:"Back", core:"Core", legs:"Legs", forearms:"Forearms" };
 
-// ---------- storage ----------
-const HIST_KEY = "gf_history";   // [{date, id, name, focus:[], durationMs, setsDone, muscles:{}, log:{ex:[{w,r}]}, volume}]
-const LAST_KEY = "gf_lastWorkoutId";
-const LASTW_KEY = "gf_lastWeights"; // { exerciseName: lastWeightUsed } — prefills the weight box
-function getLastWeights() { try { return JSON.parse(localStorage.getItem(LASTW_KEY) || "{}"); } catch (e) { return {}; } }
-function setLastWeight(name, w) { const m = getLastWeights(); m[name] = w; try { localStorage.setItem(LASTW_KEY, JSON.stringify(m)); } catch (e) {} }
-function getHistory() { try { return JSON.parse(localStorage.getItem(HIST_KEY) || "[]"); } catch (e) { return []; } }
-function saveHistory(h) { try { localStorage.setItem(HIST_KEY, JSON.stringify(h)); } catch (e) {} }
+// ---------- Supabase (auth + cloud sync) ----------
+const SB_URL = "https://egrdpvoyuhqvqyyetmxv.supabase.co";
+const SB_KEY = "sb_publishable_ygRk_rK5DL6njgrP1sSL3Q_JMb8J3px"; // publishable key — safe in client; RLS protects data
+const sb = window.supabase.createClient(SB_URL, SB_KEY);
+let currentUser = null;         // { id, email }
+let cloudHistory = [];          // session records loaded from Supabase (app shape)
+
+// per-user, per-device prefs (namespaced so a shared device doesn't mix people)
+function uid() { return currentUser ? currentUser.id : "anon"; }
+const LAST_KEY = () => "gf_lastWorkoutId_" + uid();
+const LASTW_KEY = () => "gf_lastWeights_" + uid();
+function getLastWeights() { try { return JSON.parse(localStorage.getItem(LASTW_KEY()) || "{}"); } catch (e) { return {}; } }
+function setLastWeight(name, w) { const m = getLastWeights(); m[name] = w; try { localStorage.setItem(LASTW_KEY(), JSON.stringify(m)); } catch (e) {} }
+
+// history now lives in the cloud; getHistory() returns the in-memory copy loaded on login
+function getHistory() { return cloudHistory; }
+function rowToRec(r) { return { date: r.date, id: r.workout_id, name: r.name, focus: r.focus,
+  durationMs: r.duration_ms, setsDone: r.sets_done, muscles: r.muscles, log: r.log, volume: r.volume,
+  ts: r.created_at ? new Date(r.created_at).getTime() : 0 }; }
+function recToRow(rec) { return { date: rec.date, workout_id: rec.id, name: rec.name, focus: rec.focus,
+  duration_ms: rec.durationMs, sets_done: rec.setsDone, muscles: rec.muscles, log: rec.log, volume: rec.volume }; }
+async function loadSessions() {
+  const { data, error } = await sb.from("sessions").select("*").order("created_at", { ascending: true });
+  if (error) { console.warn("load sessions:", error.message); cloudHistory = []; return; }
+  cloudHistory = (data || []).map(rowToRec);
+}
+async function insertSession(rec) {
+  const { data, error } = await sb.from("sessions").insert(recToRow(rec)).select().single();
+  if (error) { console.warn("save session:", error.message); toast("⚠️ Save failed — check connection"); return; }
+  cloudHistory.push(rowToRec(data));
+}
 function todayStr() { return new Date().toLocaleDateString("en-CA"); }
 function dayKey(d) { return d.toLocaleDateString("en-CA"); }
 
@@ -324,7 +382,7 @@ function bodyMapSVG(activeMuscle) {
 // ---------- workout picker ----------
 function suggestId() {
   // suggest something different from the last workout, to keep it rotating
-  const last = localStorage.getItem(LAST_KEY);
+  const last = localStorage.getItem(LAST_KEY());
   const options = WORKOUTS.filter(w => w.id !== last);
   return (options[0] || WORKOUTS[0]).id;
 }
@@ -443,23 +501,21 @@ function prevExercise() {
 function finishWorkout() {
   clearTick();
   const durMs = Date.now() - run.startTs;
-  const h = getHistory();
   // total volume = sum of weight × reps across every logged set
   let volume = 0;
   Object.values(run.log).forEach(sets => sets.forEach(s => { if (s.w != null && s.r != null) volume += s.w * s.r; }));
-  h.push({
+  const rec = {
     date: todayStr(), id: run.w.id, name: run.w.name, focus: run.w.focus,
     durationMs: durMs, setsDone: run.setsDone, muscles: run.muscles, log: run.log, volume: volume, ts: run.startTs
-  });
-  saveHistory(h);
-  localStorage.setItem(LAST_KEY, run.w.id);
+  };
+  localStorage.setItem(LAST_KEY(), run.w.id);
   const mins = Math.max(1, Math.round(durMs / 60000));
+  const wid = run.w.id;
   run = null;
   document.getElementById("runner").style.display = "none";
   document.getElementById("picker").style.display = "block";
-  renderPicker();
   toast("💪 Logged: " + mins + " min");
-  switchTab("dash");
+  insertSession(rec).then(() => { renderPicker(); switchTab("dash"); });
 }
 function quitWorkout() {
   if (run && run.setsDone > 0) { if (!confirm("Quit? This session won’t be saved.")) return; }
@@ -579,7 +635,61 @@ document.getElementById("prevBtn").onclick = prevExercise;
 document.getElementById("skipRestBtn").onclick = () => { if (run && run.phase === "rest") endRest(); };
 document.getElementById("quitBtn").onclick = quitWorkout;
 
-renderPicker();
+// ---------- auth flow (passwordless email code) ----------
+const gate = document.getElementById("authGate");
+const gMsg = document.getElementById("gMsg");
+function setMsg(t, cls) { gMsg.textContent = t || ""; gMsg.className = "g-msg" + (cls ? " " + cls : ""); }
+function showStep(which) {
+  document.getElementById("gStepEmail").classList.toggle("show", which === "email");
+  document.getElementById("gStepCode").classList.toggle("show", which === "code");
+}
+let pendingEmail = "";
+document.getElementById("gSendBtn").onclick = async () => {
+  const email = document.getElementById("gEmail").value.trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { setMsg("Enter a valid email", "err"); return; }
+  setMsg("Sending code…");
+  const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
+  if (error) { setMsg(error.message, "err"); return; }
+  pendingEmail = email; showStep("code"); setMsg("Code sent — check your email", "ok");
+  setTimeout(() => document.getElementById("gCode").focus(), 50);
+};
+document.getElementById("gVerifyBtn").onclick = async () => {
+  const token = document.getElementById("gCode").value.trim();
+  if (token.length < 6) { setMsg("Enter the 6-digit code", "err"); return; }
+  setMsg("Verifying…");
+  const { data, error } = await sb.auth.verifyOtp({ email: pendingEmail, token, type: "email" });
+  if (error) { setMsg(error.message, "err"); return; }
+  setMsg("");
+};
+document.getElementById("gCode").addEventListener("keydown", e => { if (e.key === "Enter") document.getElementById("gVerifyBtn").click(); });
+document.getElementById("gEmail").addEventListener("keydown", e => { if (e.key === "Enter") document.getElementById("gSendBtn").click(); });
+document.getElementById("logoutBtn").onclick = async () => { await sb.auth.signOut(); location.reload(); };
+
+async function onSignedIn(user) {
+  currentUser = { id: user.id, email: user.email };
+  gate.classList.remove("show");
+  document.getElementById("logoutBtn").style.display = "block";
+  document.getElementById("whoami").textContent = "Signed in as " + user.email;
+  await loadSessions();
+  renderPicker();
+  switchTab("workout");
+}
+function showLogin() {
+  currentUser = null;
+  gate.classList.add("show");
+  document.getElementById("logoutBtn").style.display = "none";
+  showStep("email"); setMsg("");
+}
+
+// react to auth state; check for an existing session on load
+sb.auth.onAuthStateChange((_evt, session) => {
+  if (session && session.user) onSignedIn(session.user);
+  else showLogin();
+});
+(async () => {
+  const { data } = await sb.auth.getSession();
+  if (data && data.session) onSignedIn(data.session.user); else showLogin();
+})();
 </script>
 </body>
 </html>
